@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Lox (Odin wasm)</title>
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+	<style>
+		* {
+			box-sizing: border-box;
+		}
+
+		html,
+		body {
+			height: 100%;
+			margin: 0;
+			font-family: system-ui, sans-serif;
+			/* Default UA background is white; any 1px flex/subpixel gap under Monaco shows as a bright hairline. */
+			background: #1e1e1e;
+		}
+
+		body {
+			display: flex;
+			flex-direction: column;
+		}
+
+		.visually-hidden {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			padding: 0;
+			margin: -1px;
+			overflow: hidden;
+			clip: rect(0, 0, 0, 0);
+			white-space: nowrap;
+			border: 0;
+		}
+
+		#toolbar {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 0.75rem;
+			padding: 0.5rem 0.75rem;
+			flex-shrink: 0;
+			border-bottom: 1px solid #333;
+			background: #1e1e1e;
+			color: #ccc;
+		}
+
+		#toolbar-right {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+		}
+
+		#examples {
+			min-width: 11rem;
+			padding: 0.35rem 0.5rem;
+			font-size: 0.9rem;
+			color: #ccc;
+			background: #2d2d2d;
+			border: 1px solid #454545;
+			border-radius: 4px;
+			cursor: pointer;
+		}
+
+		#examples:focus {
+			outline: 2px solid #0e639c;
+			outline-offset: 1px;
+		}
+
+		#run {
+			padding: 0.35rem 0.9rem;
+			background: #0e639c;
+			color: #fff;
+			border: none;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 0.9rem;
+		}
+
+		#run:hover {
+			background: #1177bb;
+		}
+
+		#run:disabled {
+			opacity: 0.5;
+			cursor: not-allowed;
+		}
+
+		#workspace {
+			display: flex;
+			flex-direction: row;
+			flex: 1;
+			min-height: 0;
+			background: #1e1e1e;
+		}
+
+		#left-stack {
+			display: flex;
+			flex-direction: column;
+			flex: 1;
+			min-width: 0;
+			min-height: 0;
+		}
+
+		#bytecode-panel {
+			display: flex;
+			flex-direction: column;
+			width: min(40vw, 28rem);
+			flex-shrink: 0;
+			min-height: 0;
+			background: #1a1a1a;
+			border-left: 1px solid #333;
+		}
+
+		#bytecode-header {
+			flex-shrink: 0;
+			padding: 0.35rem 0.75rem;
+			font-size: 0.7rem;
+			font-weight: 600;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+			color: #888;
+			border-bottom: 1px solid #333;
+			background: #161616;
+		}
+
+		#bytecode-wrap {
+			flex: 1;
+			min-height: 0;
+			overflow: auto;
+			padding: 0.5rem 0.75rem 0.75rem;
+			background: #1a1a1a;
+		}
+
+		#disasm {
+			width: 100%;
+			height: 100%;
+			min-height: 0;
+		}
+
+		#editor-wrap {
+			flex: 1;
+			min-height: 0;
+			background: #1e1e1e;
+			overflow: hidden;
+		}
+
+		#editor {
+			width: 100%;
+			height: 100%;
+		}
+
+		/* Monaco sometimes paints a bottom edge; kill stray borders/shadows that read as a line above Output. */
+		#editor-wrap .monaco-editor,
+		#editor-wrap .monaco-editor-background,
+		#editor-wrap .monaco-editor .overflow-guard {
+			border: none !important;
+			box-shadow: none !important;
+		}
+
+		#output-panel {
+			display: flex;
+			flex-direction: column;
+			flex: 1;
+			min-height: 0;
+			background: #1a1a1a;
+		}
+
+		#output-header {
+			display: flex;
+			flex-shrink: 0;
+			align-items: center;
+			justify-content: space-between;
+			gap: 0.75rem;
+			padding: 0.35rem 0.75rem;
+			font-size: 0.7rem;
+			font-weight: 600;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+			color: #888;
+			border-bottom: 1px solid #333;
+			background: #161616;
+		}
+
+		#output-time {
+			margin: 0;
+			font-variant-numeric: tabular-nums;
+			text-transform: none;
+			letter-spacing: normal;
+			font-weight: 500;
+			color: #aaa;
+		}
+
+		#term-wrap {
+			flex: 1;
+			min-height: 0;
+			padding: 0.5rem 0.75rem 0.75rem;
+			background: #1a1a1a;
+		}
+
+		#term {
+			width: 100%;
+			height: 100%;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="toolbar">
+		<span id="status"></span>
+		<div id="toolbar-right">
+			<label for="examples" class="visually-hidden">Examples</label>
+			<select id="examples"></select>
+			<button type="button" id="run">Run</button>
+		</div>
+	</div>
+	<div id="workspace">
+		<div id="left-stack">
+			<div id="editor-wrap">
+				<div id="editor"></div>
+			</div>
+			<div id="output-panel">
+				<div id="output-header">
+					<span>Output</span>
+					<span id="output-time" aria-live="polite"></span>
+				</div>
+				<div id="term-wrap">
+					<div id="term"></div>
+				</div>
+			</div>
+		</div>
+		<div id="bytecode-panel">
+			<div id="bytecode-header">Bytecode</div>
+			<div id="bytecode-wrap">
+				<div id="disasm"></div>
+			</div>
+		</div>
+	</div>
+
+	<script src="odin.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
+
+	<script>
+		(function () {
+			const statusEl = document.getElementById("status");
+			const runBtn = document.getElementById("run");
+			const examplesSelect = document.getElementById("examples");
+			const disasmEl = document.getElementById("disasm");
+			const outputTimeEl = document.getElementById("output-time");
+
+			const term = new Terminal({
+				convertEol: true,
+				fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, monospace",
+				fontSize: 13,
+				theme: { background: "#1a1a1a", foreground: "#d4d4d4" },
+			});
+			const fitAddon = new FitAddon.FitAddon();
+			term.loadAddon(fitAddon);
+			term.open(document.getElementById("term"));
+			fitAddon.fit();
+
+			const disasmTerm = new Terminal({
+				convertEol: true,
+				fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, monospace",
+				fontSize: 12,
+				theme: { background: "#1a1a1a", foreground: "#d4d4d4" },
+				disableStdin: true,
+			});
+			const disasmFitAddon = new FitAddon.FitAddon();
+			disasmTerm.loadAddon(disasmFitAddon);
+			disasmTerm.open(disasmEl);
+			disasmFitAddon.fit();
+			window.addEventListener("resize", () => {
+				fitAddon.fit();
+				disasmFitAddon.fit();
+			});
+
+			let wasmExports = null;
+			let memU8 = null;
+
+			function refreshMemView() {
+				memU8 = new Uint8Array(wasmExports.memory.buffer);
+			}
+
+			async function initWasm() {
+				const wasmInterface = new odin.WasmMemoryInterface();
+				const imports = odin.setupDefaultImports(
+					wasmInterface,
+					null,
+					wasmInterface.memory,
+				);
+				const response = await fetch("index.wasm");
+				const file = await response.arrayBuffer();
+				const wasm = await WebAssembly.instantiate(file, imports);
+				wasmExports = wasm.instance.exports;
+				wasmInterface.setExports(wasmExports);
+				if (wasmExports.memory) {
+					wasmInterface.setMemory(wasmExports.memory);
+				}
+				if (wasmExports._start) {
+					wasmExports._start();
+				}
+				refreshMemView();
+			}
+
+			require.config({
+				paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs" },
+			});
+
+			require(["vs/editor/editor.main"], async function () {
+				monaco.languages.register({ id: "lox" });
+				monaco.languages.setMonarchTokensProvider("lox", {
+					keywords: [
+						"and",
+						"class",
+						"else",
+						"false",
+						"for",
+						"fun",
+						"if",
+						"nil",
+						"or",
+						"print",
+						"return",
+						"super",
+						"this",
+						"true",
+						"var",
+						"while",
+					],
+					tokenizer: {
+						root: [
+							[/\/\/.*$/, "comment"],
+							[/"/, "string", "@string"],
+							[/\d+(?:\.\d+)?/, "number"],
+							[
+								/[a-zA-Z_]\w*/,
+								{
+									cases: {
+										"@keywords": "keyword",
+										"@default": "identifier",
+									},
+								},
+							],
+							[/!=|==|<=|>=/, "operator"],
+							[/[+\-*/=!><.;,(){}]/, "delimiter"],
+							[/\s+/, "white"],
+							[/./, ""],
+						],
+						string: [
+							[/[^"]+/, "string"],
+							[/"/, "string", "@pop"],
+						],
+					},
+				});
+				monaco.languages.setLanguageConfiguration("lox", {
+					comments: { lineComment: "//" },
+					brackets: [
+						["{", "}"],
+						["(", ")"],
+					],
+					autoClosingPairs: [
+						{ open: "{", close: "}" },
+						{ open: "(", close: ")" },
+						{ open: '"', close: '"' },
+					],
+					surroundingPairs: [
+						{ open: "{", close: "}" },
+						{ open: "(", close: ")" },
+						{ open: '"', close: '"' },
+					],
+				});
+
+				const EXAMPLES = [
+					{
+						id: "hello",
+						label: "Hello world",
+						code: 'print "Hello, Lox!";',
+					},
+					{
+						id: "fib",
+						label: "Fibonacci",
+						code: [
+							"fun fib(k) {",
+							"  if (k < 2) return k;",
+							"  return fib(k - 1) + fib(k - 2);",
+							"}",
+							"print fib(10);",
+						].join("\n"),
+					},
+					{
+						id: "closures",
+						label: "Closures",
+						code: [
+							"fun makeCounter() {",
+							"  var c = 0;",
+							"  fun tick() {",
+							"    c = c + 1;",
+							"    return c;",
+							"  }",
+							"  return tick;",
+							"}",
+							"var step = makeCounter();",
+							"print step();",
+							"print step();",
+						].join("\n"),
+					},
+					{
+						id: "classes",
+						label: "Classes",
+						code: [
+							"class Counter {",
+							"  init(start) {",
+							"    this.n = start;",
+							"  }",
+							"  bump() {",
+							"    this.n = this.n + 1;",
+							"    return this.n;",
+							"  }",
+							"}",
+							"",
+							"class LoudCounter < Counter {",
+							"  bump() {",
+							'    print "bump";',
+							"    return super.bump();",
+							"  }",
+							"}",
+							"",
+							"var lc = LoudCounter(40);",
+							"print lc.bump();",
+						].join("\n"),
+					},
+				];
+
+				const defaultIdx = 0;
+				for (let i = 0; i < EXAMPLES.length; i++) {
+					const opt = document.createElement("option");
+					opt.value = EXAMPLES[i].id;
+					opt.textContent = EXAMPLES[i].label;
+					if (i === defaultIdx) opt.selected = true;
+					examplesSelect.appendChild(opt);
+				}
+
+				const editor = monaco.editor.create(document.getElementById("editor"), {
+					value: EXAMPLES[defaultIdx].code,
+					language: "lox",
+					theme: "vs-dark",
+					automaticLayout: true,
+					minimap: { enabled: false },
+					fontSize: 14,
+				});
+
+				examplesSelect.addEventListener("change", () => {
+					const id = examplesSelect.value;
+					const ex = EXAMPLES.find((e) => e.id === id);
+					if (!ex) return;
+					editor.setValue(ex.code);
+					editor.setPosition({ lineNumber: 1, column: 1 });
+					editor.focus();
+				});
+
+				runBtn.disabled = true;
+				statusEl.textContent = "Loading WASM...";
+				try {
+					await initWasm();
+				} catch (e) {
+					statusEl.textContent = "WASM failed: " + e;
+					term.writeln("\x1b[31m" + String(e) + "\x1b[0m");
+					return;
+				}
+				runBtn.disabled = false;
+				statusEl.textContent = "Ready";
+
+				runBtn.addEventListener("click", () => {
+					const enc = new TextEncoder();
+					const src = enc.encode(editor.getValue());
+					const base = wasmExports.lox_scratch_base();
+					const cap = wasmExports.lox_scratch_cap();
+					if (src.length > cap) {
+						outputTimeEl.textContent = "";
+						term.writeln("\x1b[31mSource exceeds scratch buffer (" + cap + " bytes).\x1b[0m");
+						return;
+					}
+					if (memU8.buffer !== wasmExports.memory.buffer) {
+						refreshMemView();
+					}
+					memU8.set(src, base);
+					const t0 = performance.now();
+					const code = wasmExports.lox_run(base, src.length);
+					const elapsedMs = performance.now() - t0;
+					outputTimeEl.textContent = elapsedMs.toFixed(2) + " ms";
+					if (memU8.buffer !== wasmExports.memory.buffer) {
+						refreshMemView();
+					}
+					const outPtr = wasmExports.lox_last_out_ptr();
+					const outLen = wasmExports.lox_last_out_len();
+					let text = "";
+					if (outLen > 0 && outPtr !== 0) {
+						text = new TextDecoder().decode(memU8.subarray(outPtr, outPtr + outLen));
+					}
+					const disPtr = wasmExports.lox_last_disasm_ptr();
+					const disLen = wasmExports.lox_last_disasm_len();
+					let disasmText = "";
+					if (disLen > 0 && disPtr !== 0) {
+						disasmText = new TextDecoder().decode(
+							memU8.subarray(disPtr, disPtr + disLen),
+						);
+					}
+					const exitLabels = ["OK", "COMPILE_ERROR", "RUNTIME_ERROR"];
+					const exitName =
+						code < exitLabels.length ? exitLabels[code] : String(code);
+
+					term.clear();
+					if (text.length) {
+						term.write(text.replace(/\n/g, "\r\n"));
+						if (!text.endsWith("\n")) {
+							term.write("\r\n");
+						}
+					}
+					term.writeln(
+						(code === 0 ? "\x1b[92m" : "\x1b[91m") +
+						"Finished: " +
+						exitName +
+						"\x1b[0m",
+					);
+					disasmTerm.clear();
+					if (code === 1) {
+						disasmTerm.writeln(
+							"\x1b[31m(compile error: no bytecode)\x1b[0m",
+						);
+					} else if (disasmText.length) {
+						disasmTerm.write(disasmText.replace(/\n/g, "\r\n"));
+						if (!disasmText.endsWith("\n")) {
+							disasmTerm.write("\r\n");
+						}
+					}
+					disasmFitAddon.fit();
+					statusEl.textContent = "Exit: " + exitName;
+				});
+			});
+		})();
+	</script>
+</body>
+
+</html>

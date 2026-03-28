@@ -88,9 +88,11 @@ error_at :: proc(token: ^Token, message: string) {
 	fmt.sbprintf(&sb, ": %s", message)
 	msg := strings.to_string(sb)
 
-	fmt.print("\x1b[31m") // start red
-	defer fmt.print("\x1b[0m") // end red
-	fmt.eprintln(msg)
+	when ODIN_OS != .JS {
+		fmt.print("\x1b[31m") // start red
+		defer fmt.print("\x1b[0m") // end red
+		fmt.eprintln(msg)
+	}
 	append(&vm.error_output, msg)
 
 	parser.had_error = true
@@ -219,13 +221,8 @@ end_compiler :: proc() -> ^Obj_Function {
 	emit_return()
 	function := current.function
 
-	when true {
-		if (!parser.had_error) {
-			disassemble_chunk(
-				current_chunk(),
-				function.name != nil ? function.name.chars : "<script>",
-			)
-		}
+	if (!parser.had_error) {
+		disassemble_chunk(current_chunk(), function.name != nil ? function.name.chars : "<script>")
 	}
 	current = current.enclosing
 	return function
@@ -914,6 +911,10 @@ statement :: proc() {
 }
 
 compile :: proc(source: string) -> ^Obj_Function {
+	when WASM {
+		wasm_disasm_reset()
+	}
+
 	init_scanner(source)
 
 	compiler: Compiler
@@ -929,6 +930,13 @@ compile :: proc(source: string) -> ^Obj_Function {
 	}
 
 	function := end_compiler()
+	when WASM {
+		if parser.had_error {
+			wasm_disasm_discard()
+		} else {
+			wasm_disasm_finalize()
+		}
+	}
 	return parser.had_error ? nil : function
 }
 

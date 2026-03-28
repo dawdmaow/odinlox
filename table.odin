@@ -19,6 +19,7 @@ Table :: struct {
 }
 
 free_table :: proc(table: ^Table) {
+	if table == nil do return // TODO: this should be an assert
 	delete(table.entries)
 	table^ = {}
 }
@@ -26,6 +27,7 @@ free_table :: proc(table: ^Table) {
 find_entry :: proc(entries: []Entry, capacity: int, key: ^Obj_String) -> ^Entry {
 	// fmt.printfln("%#v", entries)
 	// fmt.printfln("%#v", key)
+	if key == nil do return nil // TODO: this should be an assert
 	index := key.hash & u32(capacity - 1)
 	tombstone: ^Entry = nil
 
@@ -115,6 +117,15 @@ table_add_all :: proc(from: ^Table, to: ^Table) {
 
 table_find_string :: proc(table: ^Table, chars: string, hash: u32) -> ^Obj_String {
 	assert(hash != 0)
+	when ODIN_OS == .JS && LOX_TABLE_DEBUG {
+		fmt.eprintf(
+			"[table_find_string] count=%v cap=%v len(entries)=%v chars_len=%v\n",
+			table.count,
+			table.capacity,
+			len(table.entries),
+			len(chars),
+		)
+	}
 	if table.count == 0 do return nil
 
 	index := hash & u32(table.capacity - 1)
@@ -132,6 +143,7 @@ table_find_string :: proc(table: ^Table, chars: string, hash: u32) -> ^Obj_Strin
 }
 
 table_remove_white :: proc(table: ^Table) {
+	if table == nil do return // TODO: this should be an assert
 	for i in 0 ..< table.capacity {
 		entry := &table.entries[i]
 		if entry.key != nil && !entry.key.obj.is_marked {
@@ -141,6 +153,7 @@ table_remove_white :: proc(table: ^Table) {
 }
 
 mark_table :: proc(table: ^Table) {
+	if table == nil do return // TODO: this should be an assert
 	for i in 0 ..< table.capacity {
 		entry := &table.entries[i]
 		mark_object(cast(^Obj)entry.key)

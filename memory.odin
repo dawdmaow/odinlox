@@ -5,10 +5,8 @@ DEBUG_STRESS_GC :: true // TODO: make sure this is not true by default
 // BAR :: #config(BAR_DEBUG, true) // name can be different compared to the constant
 
 import "base:runtime"
-import "core:c/libc"
 import "core:fmt"
 import "core:mem"
-import "core:os"
 
 GC_HEAP_GROW_FACTOR :: 2
 
@@ -16,7 +14,7 @@ mark_object :: proc(obj: ^Obj) {
 	if obj == nil do return
 	if obj.is_marked do return
 
-	when true {
+	when LOX_TRACE_GC {
 		fmt.printf("%p mark ", obj)
 		fmt.println(print_value(obj)) // TODO: why does print_value accept an Obj?
 		fmt.printf("\n")
@@ -41,7 +39,7 @@ mark_array :: proc(values: []Value) {
 }
 
 blacken_object :: proc(obj: ^Obj) {
-	when true {
+	when LOX_TRACE_GC {
 		fmt.printf("%p blacken ", obj)
 		fmt.println(print_value(obj)) // TODO: why does print_value accept an Obj?
 		fmt.printf("\n")
@@ -79,7 +77,9 @@ blacken_object :: proc(obj: ^Obj) {
 }
 
 free_object :: proc(object: ^Obj) {
-	fmt.printf("\033[90m%p free type %v\033[0m\n", object, typeid_of(type_of(object.variant)))
+	when ODIN_DEBUG {
+		fmt.printf("\033[90m%p free type %v\033[0m\n", object, typeid_of(type_of(object.variant)))
+	}
 
 	switch v in object.variant {
 	case ^Obj_Bound_Method:
@@ -122,7 +122,7 @@ mark_roots :: proc() {
 		upvalue = upvalue.next.variant.(^Obj_Upvalue) // TODO: why does this hold?
 	}
 
-	mark_table(&vm.globals)
+	mark_table(vm.globals)
 	mark_compiler_roots()
 	mark_object(vm.init_string)
 }
@@ -157,64 +157,45 @@ sweep :: proc() {
 }
 
 collect_garbage :: proc() {
-	fmt.printf("-- gc begin\n")
+	when ODIN_DEBUG {
+		fmt.printf("-- gc begin\n")
+	}
 	before := vm.bytes_allocated
 
 	mark_roots()
 	trace_references()
-	table_remove_white(&vm.interned_strings)
+	table_remove_white(vm.interned_strings)
 	sweep()
 
 	vm.next_gc = vm.bytes_allocated * GC_HEAP_GROW_FACTOR
 
-	fmt.printf("-- gc end\n")
-	fmt.printf(
-		"   collected %d bytes (from %d to %d) next at %d\n",
-		before - vm.bytes_allocated,
-		before,
-		vm.bytes_allocated,
-		vm.next_gc,
-	)
+	when ODIN_DEBUG {
+		fmt.printf("-- gc end\n")
+		fmt.printf(
+			"   collected %d bytes (from %d to %d) next at %d\n",
+			before - vm.bytes_allocated,
+			before,
+			vm.bytes_allocated,
+			vm.next_gc,
+		)
+	}
 }
 
 free_objects :: proc() {
-	fmt.printf("\033[90mfree_objects: starting, vm.objects = %p\033[0m\n", vm.objects)
+	when ODIN_DEBUG {
+		fmt.printf("\033[90mfree_objects: starting, vm.objects = %p\033[0m\n", vm.objects)
+	}
 	object := vm.objects
 	for object != nil {
 		next := object.next
 		free_object(object)
 		object = next
 	}
-	fmt.printf("\033[90mfree_objects: completed \033[0m\n")
+	when ODIN_DEBUG {
+		fmt.printf("\033[90mfree_objects: completed \033[0m\n")
+	}
 	vm.objects = nil
 	delete(vm.gray_stack)
-}
-
-reallocate :: proc(pointer: rawptr, old_size, new_size: int) -> (result: rawptr) {
-	vm.bytes_allocated += new_size - old_size
-	if new_size > old_size {
-		// when DEBUG_STRESS_GC { // FIXME: memory corruption...
-		// 	collect_garbage()
-		// }
-		// if vm.bytes_allocated > vm.next_gc {
-		// 	collect_garbage()
-		// }
-	}
-	if new_size == 0 {
-		libc.free(pointer)
-		return nil
-	}
-
-	if pointer == nil {
-		result = libc.malloc(libc.size_t(new_size)) // TODO: remove, realloc is probably fine.
-	} else {
-		fmt.println("###", pointer, "###")
-		result = libc.realloc(pointer, libc.size_t(new_size))
-	}
-	if result == nil {
-		panic("out of memory")
-	}
-	return result
 }
 
 allocator_proc: mem.Allocator_Proc : proc(

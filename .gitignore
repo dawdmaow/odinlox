@@ -1,3 +1,5 @@
 ols.json
 *.dSYM
 .vscode
+web/index.wasm
+.*

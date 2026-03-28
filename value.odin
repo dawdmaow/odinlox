@@ -10,7 +10,7 @@ Value :: union {
 }
 
 @(require_results)
-print_value :: proc(value: Value) -> string {
+print_value :: proc(value: Value, quote_strings := false) -> string {
 	switch v in value {
 	case bool:
 		return v ? "true" : "false"
@@ -22,7 +22,7 @@ print_value :: proc(value: Value) -> string {
 		s = strings.trim_right(s, ".")
 		return s
 	case ^Obj:
-		return print_object(v^)
+		return print_object(v^, quote_strings)
 	}
 	unreachable()
 }

@@ -1,8 +1,7 @@
 package main
 
-import "core:c/libc"
 import "core:fmt"
-import "core:os"
+import "core:mem"
 import "core:strings"
 import "core:time"
 
@@ -21,11 +20,14 @@ Vm :: struct {
 	frame_count:              int,
 	stack:                    [STACK_MAX]Value,
 	stack_top:                int, // TODO: consider renaming to stack_count
-	globals:                  Table,
-	interned_strings:         Table,
+	// Heap-allocated so the []Entry slice header is not embedded in the wasm `vm` blob;
+	// js_wasm32 was leaving len(entries)==0 while Table.capacity was updated correctly.
+	globals:                  ^Table,
+	interned_strings:         ^Table,
 	init_string:              ^Obj_String,
 	open_upvalues:            ^Obj_Upvalue,
 	bytes_allocated, next_gc: int,
+	clock_start:              time.Tick,
 	objects:                  ^Obj,
 	gray_stack:               [dynamic]^Obj,
 	print_output:             [dynamic]string,
@@ -41,7 +43,7 @@ Interpreter_Result :: enum {
 vm: Vm
 
 clock_native :: proc(args: []Value) -> Value {
-	return f64(libc.clock()) / libc.CLOCKS_PER_SEC
+	return time.duration_seconds(time.tick_diff(vm.clock_start, time.tick_now()))
 }
 
 reset_stack :: proc() {
@@ -51,19 +53,43 @@ reset_stack :: proc() {
 }
 
 runtime_error :: proc(format: string, args: ..any) {
-	fmt.eprintf(format, args)
-	fmt.eprint("\n")
+	when ODIN_OS != .JS {
+		fmt.eprintf(format, args)
+		fmt.eprint("\n")
 
-	for i := vm.frame_count - 1; i >= 0; i -= 1 {
-		frame := &vm.frames[i]
-		function := frame.closure.function
-		instruction := frame.ip - 1
-		fmt.eprintf("[line %d] in ", function.chunk.lines[instruction])
+		for i := vm.frame_count - 1; i >= 0; i -= 1 {
+			frame := &vm.frames[i]
+			function := frame.closure.function
+			instruction := frame.ip - 1
+			fmt.eprintf("[line %d] in ", function.chunk.lines[instruction])
 
-		if (function.name == nil) {
-			fmt.eprintf("script\n")
-		} else {
-			fmt.eprintf("%s()\n", function.name.chars)
+			if (function.name == nil) {
+				fmt.eprintf("script\n")
+			} else {
+				fmt.eprintf("%s()\n", function.name.chars)
+			}
+		}
+	} else {
+		append(&vm.error_output, fmt.aprintf(format, ..args))
+		for i := vm.frame_count - 1; i >= 0; i -= 1 {
+			frame := &vm.frames[i]
+			function := frame.closure.function
+			instruction := frame.ip - 1
+			if function.name == nil {
+				append(
+					&vm.error_output,
+					fmt.aprintf("[line %d] in script", function.chunk.lines[instruction]),
+				)
+			} else {
+				append(
+					&vm.error_output,
+					fmt.aprintf(
+						"[line %d] in %s()",
+						function.chunk.lines[instruction],
+						function.name.chars,
+					),
+				)
+			}
 		}
 	}
 
@@ -72,11 +98,10 @@ runtime_error :: proc(format: string, args: ..any) {
 
 define_native :: proc(name: string, function: Native_Fn) {
 	str := copy_string(name)
-	vm_push(&str.obj)
-	vm_push(&new_native(function).obj)
-	table_set(&vm.globals, vm.stack[0].(^Obj).variant.(^Obj_String), vm.stack[1])
-	vm_pop()
-	vm_pop()
+	native := new_native(function)
+	// Don't push/pop through Value here: chained .(^Obj).variant.(^Obj_String) tripped
+	// type_assertion_check on js_wasm32; globals table_set only needs ^Obj_String + Value.
+	table_set(vm.globals, str, &native.obj)
 }
 
 vm_push :: proc(value: Value) {
@@ -99,19 +124,32 @@ init_vm :: proc() {
 
 	vm.gray_stack = make([dynamic]^Obj)
 
+	vm.globals = new(Table)
+	vm.interned_strings = new(Table)
+
 	vm.init_string = nil
 	vm.init_string = copy_string("init")
 	vm.print_output = make([dynamic]string)
+	vm.clock_start = time.tick_now()
 
 	define_native("clock", clock_native)
 }
 
 free_vm :: proc() {
-	free_table(&vm.globals)
-	free_table(&vm.interned_strings)
+	if vm.globals != nil {
+		free_table(vm.globals)
+		free(vm.globals)
+		vm.globals = nil
+	}
+	if vm.interned_strings != nil {
+		free_table(vm.interned_strings)
+		free(vm.interned_strings)
+		vm.interned_strings = nil
+	}
 	vm.init_string = nil
 	free_objects()
 	delete(vm.print_output)
+	delete(vm.error_output)
 }
 
 peek :: proc(distance: int) -> Value {
@@ -374,7 +412,7 @@ run :: proc() -> Interpreter_Result {
 		case .GET_GLOBAL:
 			name := read_string(frame)
 			value: Value
-			if !table_get(&vm.globals, name, &value) {
+			if !table_get(vm.globals, name, &value) {
 				runtime_error("Undefined variable '%s'.", name.chars)
 				return .RUNTIME_ERROR
 			}
@@ -382,13 +420,13 @@ run :: proc() -> Interpreter_Result {
 
 		case .DEFINE_GLOBAL:
 			name := read_string(frame)
-			table_set(&vm.globals, name, peek(0))
+			table_set(vm.globals, name, peek(0))
 			vm_pop()
 
 		case .SET_GLOBAL:
 			name := read_string(frame)
-			if table_set(&vm.globals, name, peek(0)) {
-				table_delete(&vm.globals, name)
+			if table_set(vm.globals, name, peek(0)) {
+				table_delete(vm.globals, name)
 				runtime_error("Undefined variable '%s'.", name.chars)
 				return .RUNTIME_ERROR
 			}
@@ -485,7 +523,9 @@ run :: proc() -> Interpreter_Result {
 
 		case .PRINT:
 			s := print_value(vm_pop())
-			fmt.println(s)
+			when ODIN_OS != .JS {
+				fmt.println(s)
+			}
 			append(&vm.print_output, s)
 
 		case .JUMP:

@@ -134,15 +134,24 @@ new_string :: proc(chars: string, hash: Hash) -> ^Obj_String {
 	obj.hash = hash
 
 	vm_push(&obj.obj)
-	table_set(&vm.interned_strings, obj, nil)
+	table_set(vm.interned_strings, obj, nil)
 	vm_pop()
+
+	when ODIN_OS == .JS && LOX_TABLE_DEBUG {
+		fmt.eprintf(
+			"[new_string after table_set] count=%v cap=%v len(entries)=%v\n",
+			vm.interned_strings.count,
+			vm.interned_strings.capacity,
+			len(vm.interned_strings.entries),
+		)
+	}
 
 	return obj
 }
 
 take_string :: proc(s: string) -> ^Obj_String {
 	hash := hash_string(s)
-	interned := table_find_string(&vm.interned_strings, s, hash)
+	interned := table_find_string(vm.interned_strings, s, hash)
 	if (interned != nil) {
 		delete(s)
 		return interned
@@ -153,7 +162,7 @@ take_string :: proc(s: string) -> ^Obj_String {
 
 copy_string :: proc(chars: string) -> ^Obj_String {
 	hash := hash_string(chars)
-	interned := table_find_string(&vm.interned_strings, chars, hash)
+	interned := table_find_string(vm.interned_strings, chars, hash)
 	if (interned != nil) {
 		return interned
 	}
@@ -177,7 +186,7 @@ print_function :: proc(function: ^Obj_Function) -> string {
 }
 
 @(require_results)
-print_object :: proc(obj: Obj) -> string {
+print_object :: proc(obj: Obj, quote_strings := false) -> string {
 	switch v in obj.variant {
 	case ^Obj_Bound_Method:
 		return print_function(v.method.function)
@@ -192,7 +201,7 @@ print_object :: proc(obj: Obj) -> string {
 	case ^Obj_Native:
 		return "<native fn>"
 	case ^Obj_String:
-		return fmt.tprintf("%s", v.chars)
+		return quote_strings ? fmt.tprintf("\"%s\"", v.chars) : fmt.tprintf("%s", v.chars)
 	case ^Obj_Upvalue:
 		return "upvalue"
 	}
