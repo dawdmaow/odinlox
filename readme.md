@@ -1,10 +1,11 @@
-Bytecode virtual machine (port) based on the one in "Crafting Interpreters".
+Bytecode VM based on the one in "Crafting Interpreters".
 
-*Info*
+https://dawdmaow.github.io/odinlox/
+
+*Features*
 - Single-pass compiler (no AST)
 - Stack-based
-- Mark-and-sweep
-- Upvalue management
+- Mark-and-sweep GC
 - String interning
 
 *Constructs*
@@ -17,7 +18,5 @@ Bytecode virtual machine (port) based on the one in "Crafting Interpreters".
 - Classes
 - Inheritance
 - Native functions
-
-More examples in tests in main.odin, but the way the tests are currently setup is terrible.
 
 ![Screenshot](image.png)
