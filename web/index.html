@@ -489,43 +489,56 @@
 				runBtn.addEventListener("click", () => {
 					const enc = new TextEncoder();
 					const src = enc.encode(editor.getValue());
+
 					const base = wasmExports.lox_scratch_base();
 					const cap = wasmExports.lox_scratch_cap();
+
 					if (src.length > cap) {
 						outputTimeEl.textContent = "";
 						term.writeln("\x1b[31mSource exceeds scratch buffer (" + cap + " bytes).\x1b[0m");
 						return;
 					}
+
 					if (memU8.buffer !== wasmExports.memory.buffer) {
 						refreshMemView();
 					}
 					memU8.set(src, base);
+
 					const t0 = performance.now();
 					const code = wasmExports.lox_run(base, src.length);
 					const elapsedMs = performance.now() - t0;
+
 					outputTimeEl.textContent = elapsedMs.toFixed(2) + " ms";
+
 					if (memU8.buffer !== wasmExports.memory.buffer) {
 						refreshMemView();
 					}
+
 					const outPtr = wasmExports.lox_last_out_ptr();
 					const outLen = wasmExports.lox_last_out_len();
 					let text = "";
+
 					if (outLen > 0 && outPtr !== 0) {
 						text = new TextDecoder().decode(memU8.subarray(outPtr, outPtr + outLen));
 					}
+
 					const disPtr = wasmExports.lox_last_disasm_ptr();
 					const disLen = wasmExports.lox_last_disasm_len();
+
 					let disasmText = "";
 					if (disLen > 0 && disPtr !== 0) {
 						disasmText = new TextDecoder().decode(
 							memU8.subarray(disPtr, disPtr + disLen),
 						);
 					}
+
 					const exitLabels = ["OK", "COMPILE_ERROR", "RUNTIME_ERROR"];
 					const exitName =
 						code < exitLabels.length ? exitLabels[code] : String(code);
 
+
 					term.clear();
+
 					if (text.length) {
 						term.write(text.replace(/\n/g, "\r\n"));
 						if (!text.endsWith("\n")) {
