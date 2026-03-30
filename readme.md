@@ -19,3 +19,5 @@ Bytecode virtual machine (port) based on the one in "Crafting Interpreters".
 - Native functions
 
 More examples in tests in main.odin, but the way the tests are currently setup is terrible.
+
+![Screenshot](image.png)
